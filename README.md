@@ -13,7 +13,13 @@ The endgoal is here is to slowly make the LLM do more and more and remove more a
 1. Client consumes events from a source (e.g. Twitter scraping or Discord channel) and emits events to the core.
 2. Core processes the content. We process with an LLM and enrich the content with additional information, including fetching from a vector db to contextualize the content. This includes intents and actions, which are structured outputs that the client will act upon.
 3. Core emits events to other parts of the system. For example, if the intent is to send a tweet, the core will emit a tweet_request event to the Twitter client.
-4. The Agent will then decide to continue or stop the conversation. If it decides to continue, it will come up with a new intent and the cycle will start again.å
+4. The Agent will then decide to continue or stop the conversation. If it decides to continue, it will come up with a new intent and the cycle will start again.
+
+## Parts
+
+### Consciousness
+
+Consciousness is the brain of the agent. It thinks based on it's own memories and the memories of the world, then decides what to do.
 
 ## Setup
 
