@@ -7,6 +7,7 @@ import { LLMIntentExtractor } from "./core/intent";
 import { LogLevel } from "./core/logger";
 import { EventProcessor } from "./core/processor";
 import { RoomManager } from "./core/roomManager";
+import { Consciousness } from "./core/consciousness";
 
 async function main() {
   // Validate environment variables before proceeding
@@ -73,12 +74,22 @@ async function main() {
   // Register client with core
   core.registerClient(twitterClient);
 
+  // Initialize consciousness after core is set up
+  const consciousness = new Consciousness(core, llmClient, roomManager, {
+    intervalMs: 3000, // Think every 5 minutes
+    minConfidence: 0.7, // Only act on thoughts with high confidence
+    logLevel: LogLevel.DEBUG,
+  });
+
+  // Start the consciousness
+  await consciousness.start();
+
   // The clients will automatically start listening for their respective events
   console.log("System initialized and running...");
 
   // Example of how rooms work
   process.on("SIGINT", async () => {
-    await Promise.all([twitterClient.stop()]);
+    await Promise.all([twitterClient.stop(), consciousness.stop()]);
     process.exit(0);
   });
 }

@@ -86,4 +86,8 @@ export class RoomManager {
       metadata: result.metadata,
     }));
   }
+
+  public getRooms(): Map<string, Room> {
+    return this.rooms;
+  }
 }

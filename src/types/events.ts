@@ -18,19 +18,19 @@ export interface ClientEvent extends BaseEvent {
 
 // Twitter specific events
 export interface TweetRequest extends CoreEvent {
-  type: 'tweet_request';
+  type: "tweet_request";
   content: string;
   replyTo?: string;
 }
 
 export interface DMRequest extends CoreEvent {
-  type: 'dm_request';
+  type: "dm_request";
   content: string;
   userId: string;
 }
 
 export interface TweetReceived extends ClientEvent {
-  type: 'tweet_received';
+  type: "tweet_received";
   content: string;
   tweetId: string;
   userId: string;
@@ -38,7 +38,7 @@ export interface TweetReceived extends ClientEvent {
 }
 
 export interface DMReceived extends ClientEvent {
-  type: 'dm_received';
+  type: "dm_received";
   content: string;
   userId: string;
   username: string;
@@ -46,13 +46,13 @@ export interface DMReceived extends ClientEvent {
 
 // Discord specific events
 export interface DiscordMessageRequest extends CoreEvent {
-  type: 'discord_message';
+  type: "discord_message";
   channelId: string;
   content: string;
 }
 
 export interface DiscordMessageReceived extends ClientEvent {
-  type: 'discord_message_received';
+  type: "discord_message_received";
   channelId: string;
   content: string;
   username: string;
@@ -66,4 +66,12 @@ export type DiscordIncomingEvent = DiscordMessageReceived;
 
 // Combined types
 export type OutgoingEvent = TwitterOutgoingEvent | DiscordOutgoingEvent;
-export type IncomingEvent = TwitterIncomingEvent | DiscordIncomingEvent;
+export type IncomingEvent =
+  | TwitterIncomingEvent
+  | DiscordIncomingEvent
+  | InternalThought;
+
+export interface InternalThought extends ClientEvent {
+  type: "internal_thought";
+  content: string;
+}
