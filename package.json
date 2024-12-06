@@ -1,0 +1,20 @@
+{
+  "name": "event-driven-agent",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "scripts": {
+    "start": "bun run src/main.ts"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "agent-twitter-client": "^0.0.16",
+    "uuid": "^11.0.3",
+    "zod": "^3.23.8"
+  }
+}
