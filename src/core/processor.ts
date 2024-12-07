@@ -168,10 +168,15 @@ Return only valid JSON, no other text.`;
 
         result =
           typeof cleanJson === "string" ? JSON.parse(cleanJson) : cleanJson;
+
+        // Validate required fields
+        if (!result.summary || !Array.isArray(result.topics)) {
+          throw new Error("Invalid response structure");
+        }
       } catch (parseError) {
-        this.logger.error(
+        this.logger.warn(
           "EventProcessor.enrichContent",
-          "Failed to parse LLM response",
+          "Failed to parse LLM response, retrying with stricter prompt",
           {
             error:
               parseError instanceof Error
@@ -180,14 +185,18 @@ Return only valid JSON, no other text.`;
             response: enrichment,
           }
         );
-        // Provide fallback values
-        result = {
-          summary: content.slice(0, 100),
-          topics: [],
-          sentiment: "neutral",
-          entities: [],
-          intent: "unknown",
-        };
+
+        // Retry with stricter prompt
+        const retryPrompt = `${prompt}\n\nIMPORTANT: Respond with ONLY the JSON object, no markdown, no explanations.`;
+        const retryResponse = await this.llmClient.analyze(retryPrompt, {
+          temperature: 0.2, // Lower temperature for more consistent formatting
+          formatResponse: true,
+        });
+
+        result =
+          typeof retryResponse === "string"
+            ? JSON.parse(this.stripCodeBlock(retryResponse))
+            : retryResponse;
       }
 
       return {
@@ -240,8 +249,114 @@ Return only valid JSON, no other text.`;
     intents: ProcessedIntent[],
     room: Room
   ): Promise<CoreEvent[]> {
-    // Implement the logic to generate actions based on intents and room
-    // This is a placeholder and should be replaced with actual implementation
-    return [];
+    const actions: CoreEvent[] = [];
+
+    for (const intent of intents) {
+      try {
+        // Get all available actions
+        const availableActions = this.actionRegistry.getAvailableActions();
+
+        // Create a prompt to determine the best action
+        const prompt = `Given the following intent and available actions, determine the most appropriate action to take.
+
+Intent:
+- Type: ${intent.type}
+- Confidence: ${intent.confidence}
+- Parameters: ${JSON.stringify(intent.parameters, null, 2)}
+
+Available Actions:
+${Array.from(availableActions.entries())
+  .map(
+    ([type, def]) => `
+- ${type}:
+  Description: ${def.description}
+  Platforms: ${def.targetPlatforms.join(", ")}
+  Parameters: ${JSON.stringify(def.parameters, null, 2)}
+`
+  )
+  .join("\n")}
+
+Response format:
+\`\`\`json
+{
+  "selectedAction": "action_type",
+  "confidence": 0.0-1.0,
+  "parameters": {
+    // Action-specific parameters
+  },
+  "reasoning": "Explanation of why this action was chosen"
+}
+\`\`\`
+
+Return only valid JSON.`;
+
+        const response = await this.llmClient.analyze(prompt, {
+          temperature: 0.3,
+          formatResponse: true,
+        });
+
+        const result =
+          typeof response === "string"
+            ? JSON.parse(this.stripCodeBlock(response))
+            : response;
+
+        if (result.confidence >= 0.7) {
+          const actionDef = this.actionRegistry.getActionDefinition(
+            result.selectedAction
+          );
+
+          if (actionDef) {
+            // Create the action event based on the definition
+            const event: CoreEvent = {
+              type: actionDef.eventType,
+              target: actionDef.clientType,
+              content: result.parameters.content || "",
+              timestamp: new Date(),
+              metadata: {
+                ...result.parameters,
+                intent: intent.type,
+                confidence: result.confidence,
+                reasoning: result.reasoning,
+                originalParameters: intent.parameters,
+              },
+            };
+
+            actions.push(event);
+
+            this.logger.debug(
+              "EventProcessor.generateActions",
+              "Generated action event",
+              {
+                intentType: intent.type,
+                actionType: actionDef.type,
+                confidence: result.confidence,
+                reasoning: result.reasoning,
+              }
+            );
+          }
+        } else {
+          this.logger.debug(
+            "EventProcessor.generateActions",
+            "Action confidence too low",
+            {
+              intentType: intent.type,
+              selectedAction: result.selectedAction,
+              confidence: result.confidence,
+            }
+          );
+        }
+      } catch (error) {
+        this.logger.error(
+          "EventProcessor.generateActions",
+          "Failed to generate action",
+          {
+            error: error instanceof Error ? error.message : String(error),
+            intentType: intent.type,
+          }
+        );
+      }
+    }
+
+    return actions;
   }
 }

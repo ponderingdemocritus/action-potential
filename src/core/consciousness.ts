@@ -38,6 +38,8 @@ export interface ThoughtTemplate {
 }
 
 export class Consciousness {
+  private static readonly ROOM_ID = "consciousness_main"; // Use a constant room ID
+
   private isThinking: boolean = false;
   private logger: Logger;
   private thoughtInterval: NodeJS.Timer | null = null;
@@ -356,10 +358,10 @@ Return only the JSON object, no other text.`;
         ...thought.context,
         confidence: thought.confidence,
         suggestedActions: thought.context?.suggestedActions || [],
+        roomId: Consciousness.ROOM_ID, // Ensure consistent room ID
       },
     };
 
-    // Let the core process it like any other event
     await this.core.emit(internalEvent);
   }
 

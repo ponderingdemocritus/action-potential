@@ -66,6 +66,10 @@ export class RoomManager {
     platformId: string,
     platform: string
   ): Promise<Room | undefined> {
+    if (platform === "consciousness") {
+      platformId = "main";
+    }
+
     const roomId = Room.createDeterministicId(platform, platformId);
     return this.getRoom(roomId);
   }
