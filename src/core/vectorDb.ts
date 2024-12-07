@@ -18,6 +18,17 @@ export interface VectorDB {
   ): Promise<SearchResult[]>;
   store(content: string, metadata?: Record<string, any>): Promise<void>;
   delete(id: string): Promise<void>;
+  storeInRoom?(
+    content: string,
+    roomId: string,
+    metadata?: Record<string, any>
+  ): Promise<void>;
+  findSimilarInRoom?(
+    content: string,
+    roomId: string,
+    limit?: number,
+    metadata?: Record<string, any>
+  ): Promise<SearchResult[]>;
 }
 
 export class ChromaVectorDB implements VectorDB {
@@ -186,6 +197,42 @@ export class ChromaVectorDB implements VectorDB {
     });
   }
 
+  public async storeInRoom(
+    content: string,
+    roomId: string,
+    metadata?: Record<string, any>
+  ): Promise<void> {
+    try {
+      const collection = await this.getCollectionForRoom(roomId);
+      const id = Room.createDeterministicMemoryId(roomId, content);
+
+      await collection.modify({
+        metadata: {
+          ...collection.metadata,
+          lastActive: new Date().toISOString(),
+        },
+      });
+
+      await collection.add({
+        ids: [id],
+        documents: [content],
+        metadatas: [{ ...metadata, roomId }],
+      });
+
+      this.logger.debug("ChromaVectorDB.storeInRoom", "Stored content", {
+        roomId,
+        contentLength: content.length,
+        memoryId: id,
+      });
+    } catch (error) {
+      this.logger.error("ChromaVectorDB.storeInRoom", "Storage failed", {
+        error: error instanceof Error ? error.message : String(error),
+        roomId,
+      });
+      throw error;
+    }
+  }
+
   public async findSimilarInRoom(
     content: string,
     roomId: string,
@@ -216,42 +263,6 @@ export class ChromaVectorDB implements VectorDB {
         roomId,
       });
       return [];
-    }
-  }
-
-  public async storeInRoom(
-    content: string,
-    roomId: string,
-    metadata?: Record<string, any>
-  ): Promise<void> {
-    try {
-      const collection = await this.getCollectionForRoom(roomId);
-      const id = Room.createDeterministicMemoryId(roomId, content);
-
-      await collection.modify({
-        metadata: {
-          ...collection.metadata,
-          lastActive: new Date().toISOString(),
-        },
-      });
-
-      await collection.add({
-        ids: [id],
-        documents: [content],
-        metadatas: metadata ? [{ ...metadata, roomId }] : [{ roomId }],
-      });
-
-      this.logger.debug("ChromaVectorDB.storeInRoom", "Stored in room", {
-        roomId,
-        contentLength: content.length,
-        memoryId: id,
-      });
-    } catch (error) {
-      this.logger.error("ChromaVectorDB.storeInRoom", "Storage failed", {
-        error: error instanceof Error ? error.message : String(error),
-        roomId,
-      });
-      throw error;
     }
   }
 

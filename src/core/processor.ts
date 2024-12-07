@@ -4,7 +4,7 @@ import { type ActionRegistry } from "./actions";
 import { type IntentExtractor } from "./intent";
 import { Logger, LogLevel } from "./logger";
 import { type Room } from "./room";
-import { type VectorDB } from "./vectorDb";
+import { type VectorDB, type SearchResult } from "./vectorDb";
 
 export interface ProcessedIntent {
   type: string;
@@ -14,16 +14,47 @@ export interface ProcessedIntent {
 }
 
 export interface EnrichedContext {
-  similarMessages: any[];
-  memories: any[];
-  clientVariables: Record<string, any>;
-  metadata: Record<string, any>;
+  timeContext: string;
+  summary: string;
+  topics: string[];
+  relatedMemories: string[];
+  sentiment?: string;
+  entities?: string[];
+  intent?: string;
+  similarMessages?: any[];
+  clientVariables?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 export interface ProcessingResult {
   intents: ProcessedIntent[];
   suggestedActions: CoreEvent[];
   enrichedContext: EnrichedContext;
+}
+
+interface EnrichedContent {
+  originalContent: string;
+  timestamp: Date;
+  context: EnrichedContext;
+}
+
+// Type guard for VectorDB with room methods
+interface VectorDBWithRooms extends VectorDB {
+  storeInRoom: (
+    content: string,
+    roomId: string,
+    metadata?: Record<string, any>
+  ) => Promise<void>;
+  findSimilarInRoom: (
+    content: string,
+    roomId: string,
+    limit?: number,
+    metadata?: Record<string, any>
+  ) => Promise<SearchResult[]>;
+}
+
+function hasRoomSupport(vectorDb: VectorDB): vectorDb is VectorDBWithRooms {
+  return "storeInRoom" in vectorDb && "findSimilarInRoom" in vectorDb;
 }
 
 export class EventProcessor {
@@ -50,345 +81,167 @@ export class EventProcessor {
       roomId: room.id,
     });
 
-    // Regular event processing
-    const intents = await this.extractIntents(event);
-    this.logger.trace("EventProcessor.process", "Extracted intents", {
-      intents,
-    });
+    const enrichedContent = await this.enrichContent(
+      event.content,
+      room,
+      event.timestamp
+    );
 
-    const context = await this.enrichContext(event, intents, room);
-    this.logger.trace("EventProcessor.process", "Enriched context", {
-      memories: context.memories.length,
-      similarMessages: context.similarMessages.length,
-    });
+    const intents = await this.intentExtractor.extract(event.content);
 
-    const actions = await this.determineActions(event, intents, context);
-    this.logger.debug("EventProcessor.process", "Determined actions", {
-      actionCount: actions.length,
-    });
+    // Use type guard for room operations
+    if (this.vectorDb && hasRoomSupport(this.vectorDb)) {
+      await this.vectorDb.storeInRoom(event.content, room.id, {
+        ...event.metadata,
+        ...enrichedContent.context,
+        eventType: event.type,
+        timestamp: event.timestamp,
+      });
+    }
+
+    const suggestedActions = await this.generateActions(intents, room);
 
     return {
       intents,
-      suggestedActions: actions,
-      enrichedContext: context,
+      suggestedActions,
+      enrichedContext: enrichedContent.context,
     };
   }
 
-  private async extractIntents(event: ClientEvent): Promise<ProcessedIntent[]> {
-    this.logger.trace("EventProcessor.extractIntents", "Extracting intents", {
-      content: event.content,
-    });
-
-    try {
-      const intents = await this.intentExtractor.extract(event.content);
-      this.logger.debug("EventProcessor.extractIntents", "Intents extracted", {
-        count: intents.length,
-      });
-      return intents;
-    } catch (error) {
-      this.logger.error(
-        "EventProcessor.extractIntents",
-        "Failed to extract intents",
-        {
-          error: error instanceof Error ? error.message : String(error),
-        }
-      );
-      return [];
-    }
+  private stripCodeBlock(text: string): string {
+    // Remove markdown code block markers and any language identifier
+    return text
+      .replace(/^```[\w]*\n/, "") // Remove opening ```json or similar
+      .replace(/\n```$/, "") // Remove closing ```
+      .trim();
   }
 
-  private async enrichContext(
-    event: ClientEvent,
-    intents: ProcessedIntent[],
-    room: Room
-  ): Promise<EnrichedContext> {
-    this.logger.trace("EventProcessor.enrichContext", "Enriching context");
+  private async enrichContent(
+    content: string,
+    room: Room,
+    timestamp: Date
+  ): Promise<EnrichedContent> {
+    // Use type guard for getting related memories
+    const relatedMemories =
+      this.vectorDb && hasRoomSupport(this.vectorDb)
+        ? await this.vectorDb.findSimilarInRoom(content, room.id, 3)
+        : [];
+
+    const prompt = `Analyze the following content and provide enrichment:
+
+Content: "${content}"
+
+Related Context:
+${relatedMemories.map((m: SearchResult) => `- ${m.content}`).join("\n")}
+
+Provide a JSON response with:
+1. A brief summary (max 100 chars)
+2. Key topics mentioned (max 5)
+3. Sentiment analysis
+4. Named entities
+5. Detected intent/purpose
+
+Response format:
+\`\`\`json
+{
+  "summary": "Brief summary here",
+  "topics": ["topic1", "topic2"],
+  "sentiment": "positive|negative|neutral",
+  "entities": ["entity1", "entity2"],
+  "intent": "question|statement|request|etc"
+}
+\`\`\`
+Return only valid JSON, no other text.`;
 
     try {
-      // Include room memories in context
-      const memories = room.getMemories(5); // Get last 5 memories
-      const similarMessages = await this.vectorDb.findSimilar(event.content);
-
-      // Get client-specific variables and templates
-      const clientVariables = await this.getClientVariables(event.source);
-
-      this.logger.debug("EventProcessor.enrichContext", "Context enriched", {
-        memoriesCount: memories.length,
-        similarMessagesCount: similarMessages.length,
-      });
-
-      return {
-        similarMessages,
-        memories,
-        clientVariables,
-        metadata: {
-          timestamp: event.timestamp,
-          source: event.source,
-          roomId: room.id,
-          platform: room.platform,
-          intents: intents.map((i) => i.type),
-        },
-      };
-    } catch (error) {
-      this.logger.error(
-        "EventProcessor.enrichContext",
-        "Failed to enrich context",
-        {
-          error: error instanceof Error ? error.message : String(error),
-        }
-      );
-      throw error;
-    }
-  }
-
-  private async determineActions(
-    event: ClientEvent,
-    intents: ProcessedIntent[],
-    context: EnrichedContext
-  ): Promise<CoreEvent[]> {
-    this.logger.trace("EventProcessor.determineActions", "Determining actions");
-
-    try {
-      // Prepare prompt with all available context
-      const prompt = this.buildPrompt(event, intents, context);
-
-      // Get LLM response with structured analysis
-      const response = await this.llmClient.analyze(prompt, {
-        role: "AI agent assistant",
+      const enrichment = await this.llmClient.analyze(prompt, {
         temperature: 0.3,
-        maxTokens: 1000,
         formatResponse: true,
       });
 
-      // Parse LLM response into concrete actions
-      const actions = this.parseActionsFromLLM(response);
+      let result;
+      try {
+        const cleanJson =
+          typeof enrichment === "string"
+            ? this.stripCodeBlock(enrichment)
+            : enrichment;
 
-      this.logger.debug(
-        "EventProcessor.determineActions",
-        "Actions determined",
-        {
-          actionCount: actions.length,
-        }
-      );
-
-      return actions;
-    } catch (error) {
-      this.logger.error(
-        "EventProcessor.determineActions",
-        "Failed to determine actions",
-        {
-          error: error instanceof Error ? error.message : String(error),
-        }
-      );
-      return [];
-    }
-  }
-
-  private async getClientVariables(
-    clientId: string
-  ): Promise<Record<string, any>> {
-    // Fetch client-specific variables, templates, etc.
-    return {};
-  }
-
-  private buildPrompt(
-    event: ClientEvent,
-    intents: ProcessedIntent[],
-    context: EnrichedContext
-  ): string {
-    this.logger.trace("EventProcessor.buildPrompt", "Building LLM prompt");
-
-    // Get available actions and format them for the prompt
-    const availableActions = Array.from(
-      this.actionRegistry.getAvailableActions().values()
-    ).map((action) => ({
-      type: action.type,
-      description: action.description,
-      platforms: action.targetPlatforms,
-      example: action.examples[0].action,
-    }));
-
-    return `You are an AI agent assistant responsible for determining appropriate actions based on events and context.
-
-Current Event Context:
-- Type: ${event.type}
-- Source: ${event.source}
-- Platform: ${context.metadata.platform}
-- Room: ${context.metadata.roomId}
-
-Available Actions:
-${availableActions
-  .map(
-    (action) => `
-- ${action.type}: ${action.description}
-  Platforms: ${action.platforms.join(", ")}
-  Example: ${JSON.stringify(action.example, null, 2)}
-`
-  )
-  .join("\n")}
-
-Recent Memory Context:
-${context.memories.map((m) => `- ${m.content}`).join("\n")}
-
-Similar Past Messages:
-${context.similarMessages.map((m) => `- ${m.content}`).join("\n")}
-
-Detected Intents:
-${intents.map((i) => `- ${i.type} (confidence: ${i.confidence})`).join("\n")}
-
-Current Message Content:
-${event.content}
-
-Determine what actions should be taken in response to this event. Consider:
-1. The context and history of the conversation
-2. The detected intents and their confidence levels
-3. The available actions and their platform requirements
-4. The potential impact of each action
-
-Choose from the available action types listed above.
-
-Provide your response as a structured analysis with the following format:
-
-
-Respond with a JSON object in the following format:
-
-\`\`\`json
-{
-  "reasoning": "Explain your thought process...",
-  "confidenceLevel": 0.0-1.0,
-  "actions": [
-    {
-      "type": "action_type",
-      "target": "client_id",
-      "content": "message content",
-      "parameters": {},
-      "justification": "Why this action is appropriate..."
-    }
-  ],
-  "caveats": [
-    "List any important considerations or limitations..."
-  ]
-}
-\`\`\`
-`;
-  }
-
-  private parseActionsFromLLM(
-    response: string | Record<string, any>
-  ): CoreEvent[] {
-    this.logger.trace(
-      "EventProcessor.parseActionsFromLLM",
-      "Parsing LLM response"
-    );
-
-    try {
-      let analysis: Record<string, any>;
-
-      if (typeof response === "string") {
-        try {
-          // Try to clean the response string before parsing
-          const cleanedResponse = response
-            .replace(/\n/g, " ") // Remove newlines
-            .replace(/\r/g, "") // Remove carriage returns
-            .replace(/\t/g, " ") // Remove tabs
-            .replace(/\\"/g, '"') // Handle escaped quotes
-            .replace(/"{2,}/g, '"'); // Remove multiple quotes
-
-          analysis = JSON.parse(cleanedResponse);
-        } catch (parseError) {
-          this.logger.warn(
-            "EventProcessor.parseActionsFromLLM",
-            "Initial parse failed, attempting cleanup",
-            {
-              error:
-                parseError instanceof Error
-                  ? parseError.message
-                  : String(parseError),
-            }
-          );
-
-          // If that fails, try to extract just the JSON part
-          const jsonMatch = response.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) {
-            throw new Error("Could not find valid JSON in response");
+        result =
+          typeof cleanJson === "string" ? JSON.parse(cleanJson) : cleanJson;
+      } catch (parseError) {
+        this.logger.error(
+          "EventProcessor.enrichContent",
+          "Failed to parse LLM response",
+          {
+            error:
+              parseError instanceof Error
+                ? parseError.message
+                : String(parseError),
+            response: enrichment,
           }
-          analysis = JSON.parse(jsonMatch[0]);
-        }
-      } else {
-        analysis = response;
-      }
-
-      this.logger.debug(
-        "EventProcessor.parseActionsFromLLM",
-        "Analysis received",
-        {
-          confidence: analysis.confidenceLevel,
-          actionCount: analysis.actions?.length || 0,
-          reasoning: analysis.reasoning?.substring(0, 100) + "...",
-        }
-      );
-
-      if (!analysis.actions || !Array.isArray(analysis.actions)) {
-        throw new Error(
-          "Invalid response format: missing or invalid actions array"
         );
+        // Provide fallback values
+        result = {
+          summary: content.slice(0, 100),
+          topics: [],
+          sentiment: "neutral",
+          entities: [],
+          intent: "unknown",
+        };
       }
 
-      // Validate each action before transforming
-      analysis.actions.forEach((action, index) => {
-        if (!action.type || !action.target || !action.content) {
-          throw new Error(
-            `Invalid action at index ${index}: missing required fields`
-          );
-        }
-      });
-
-      // Transform the analyzed actions into CoreEvents
-      const coreEvents = analysis.actions.map((action) => {
-        const actionDef = this.actionRegistry.getActionDefinition(action.type);
-        if (!actionDef) {
-          throw new Error(`Unknown action type: ${action.type}`);
-        }
-
-        return {
-          type: actionDef.eventType, // Use the eventType from definition
-          target: action.target,
-          content: action.content,
-          timestamp: new Date(),
-          metadata: {
-            ...action.parameters,
-            confidence: analysis.confidenceLevel,
-            reasoning: analysis.reasoning,
-            justification: action.justification,
-            caveats: analysis.caveats,
-            actionType: action.type, // Store original action type in metadata
-          },
-        };
-      });
-
-      this.logger.debug(
-        "EventProcessor.parseActionsFromLLM",
-        "Parsed actions",
-        {
-          count: coreEvents.length,
-          types: coreEvents.map((e) => e.type),
-        }
-      );
-
-      return coreEvents;
+      return {
+        originalContent: content,
+        timestamp,
+        context: {
+          timeContext: this.getTimeContext(timestamp),
+          summary: result.summary || content.slice(0, 100),
+          topics: Array.isArray(result.topics) ? result.topics : [],
+          relatedMemories: relatedMemories.map((m: SearchResult) => m.content),
+          sentiment: result.sentiment || "neutral",
+          entities: Array.isArray(result.entities) ? result.entities : [],
+          intent: result.intent || "unknown",
+        },
+      };
     } catch (error) {
-      this.logger.error(
-        "EventProcessor.parseActionsFromLLM",
-        "Failed to parse LLM response",
-        {
-          error: error instanceof Error ? error.message : String(error),
-          response:
-            typeof response === "string"
-              ? response.substring(0, 200) + "..."
-              : JSON.stringify(response).substring(0, 200) + "...",
-        }
-      );
-      return [];
+      this.logger.error("EventProcessor.enrichContent", "Enrichment failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Return basic enrichment on failure
+      return {
+        originalContent: content,
+        timestamp,
+        context: {
+          timeContext: this.getTimeContext(timestamp),
+          summary: content.slice(0, 100),
+          topics: [],
+          relatedMemories: relatedMemories.map((m: SearchResult) => m.content),
+          sentiment: "neutral",
+          entities: [],
+          intent: "unknown",
+        },
+      };
     }
+  }
+
+  private getTimeContext(timestamp: Date): string {
+    const now = new Date();
+    const hoursDiff = (now.getTime() - timestamp.getTime()) / (1000 * 60 * 60);
+
+    if (hoursDiff < 24) return "very_recent";
+    if (hoursDiff < 72) return "recent";
+    if (hoursDiff < 168) return "this_week";
+    if (hoursDiff < 720) return "this_month";
+    return "older";
+  }
+
+  private async generateActions(
+    intents: ProcessedIntent[],
+    room: Room
+  ): Promise<CoreEvent[]> {
+    // Implement the logic to generate actions based on intents and room
+    // This is a placeholder and should be replaced with actual implementation
+    return [];
   }
 }
