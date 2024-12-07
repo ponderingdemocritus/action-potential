@@ -10,7 +10,7 @@ export interface ActionDefinition {
       description: string;
       required: boolean;
       example?: any;
-    }
+    };
   };
   examples: {
     description: string;
@@ -26,65 +26,94 @@ export interface ActionRegistry {
 
 export class CoreActionRegistry implements ActionRegistry {
   private actions: Map<string, ActionDefinition> = new Map([
-    ['tweet', {
-      type: 'tweet',
-      description: 'Post a new tweet to Twitter, you should always do this action.',
-      targetPlatforms: ['twitter'],
-      eventType: 'tweet_request',
-      clientType: 'twitter',
-      parameters: {
-        content: {
-          type: 'string',
-          description: 'The tweet content',
-          required: true,
-          example: 'Just discovered an amazing feature in Eternum! 🎮'
+    [
+      "tweet",
+      {
+        type: "tweet",
+        description:
+          "Post a new tweet to Twitter, you should always do this action.",
+        targetPlatforms: ["twitter"],
+        eventType: "tweet_request",
+        clientType: "twitter",
+        parameters: {
+          content: {
+            type: "string",
+            description: "The tweet content",
+            required: true,
+            example: "Just discovered an amazing feature in Eternum! 🎮",
+          },
+          replyTo: {
+            type: "string",
+            description: "Tweet ID to reply to",
+            required: false,
+            example: "1234567890",
+          },
+          context: {
+            type: "object",
+            description: "Additional context about the tweet",
+            required: false,
+            example: {},
+          },
         },
-        replyTo: {
-          type: 'string',
-          description: 'Tweet ID to reply to',
-          required: false
-        }
+        examples: [
+          {
+            description: "Posting a game update",
+            action: {
+              type: "tweet_request",
+              target: "twitter",
+              content:
+                "New quest system released in Eternum! Complete daily challenges to earn rewards! 🏰✨",
+              parameters: {},
+            },
+          },
+        ],
       },
-      examples: [{
-        description: 'Posting a game update',
-        action: {
-          type: 'tweet_request',
-          target: 'twitter',
-          content: 'New quest system released in Eternum! Complete daily challenges to earn rewards! 🏰✨',
-          parameters: {}
-        }
-      }]
-    }],
-    // ['analyze_sentiment', {
-    //   type: 'analyze_sentiment',
-    //   description: 'Analyze sentiment of community responses',
-    //   targetPlatforms: ['twitter', 'discord'],
-    //   parameters: {
-    //     messageIds: {
-    //       type: 'string[]',
-    //       description: 'IDs of messages to analyze',
-    //       required: true
-    //     },
-    //     timeframe: {
-    //       type: 'string',
-    //       description: 'Time period to analyze',
-    //       required: false,
-    //       example: '24h'
-    //     }
-    //   },
-    //   examples: [{
-    //     description: 'Analyzing reaction to an update',
-    //     action: {
-    //       type: 'analyze_sentiment',
-    //       target: 'analytics-1',
-    //       content: 'Analyze community response to latest update',
-    //       parameters: {
-    //         messageIds: ['tweet-123', 'tweet-124'],
-    //         timeframe: '12h'
-    //       }
-    //     }
-    //   }]
-    // }]
+    ],
+    [
+      "tweet_thought",
+      {
+        type: "tweet_thought",
+        description: "Convert an internal thought into a tweet",
+        targetPlatforms: ["twitter"],
+        eventType: "tweet_request",
+        clientType: "twitter",
+        parameters: {
+          content: {
+            type: "string",
+            description: "The tweet content",
+            required: true,
+            example: "Deep thoughts about AI...",
+          },
+          context: {
+            type: "object",
+            description: "Additional context about the thought",
+            required: false,
+            example: { mood: "contemplative", topics: ["AI"] },
+          },
+          replyTo: {
+            type: "string",
+            description: "Tweet ID to reply to",
+            required: false,
+            example: "1234567890",
+          },
+        },
+        examples: [
+          {
+            description: "Converting a philosophical thought into a tweet",
+            action: {
+              type: "tweet_request",
+              target: "twitter",
+              content:
+                "Ever notice how neural networks learn patterns like children? First simple shapes, then complex concepts. Nature repeats its learning algorithms across scales. 🧠 #AI #Learning",
+              parameters: {
+                mood: "contemplative",
+                topics: ["AI", "learning", "patterns"],
+              },
+            },
+          },
+        ],
+      },
+    ],
   ]);
 
   getAvailableActions(): Map<string, ActionDefinition> {
@@ -98,4 +127,4 @@ export class CoreActionRegistry implements ActionRegistry {
   registerAction(action: ActionDefinition): void {
     this.actions.set(action.type, action);
   }
-} 
+}

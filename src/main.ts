@@ -8,6 +8,7 @@ import { LogLevel } from "./core/logger";
 import { EventProcessor } from "./core/processor";
 import { RoomManager } from "./core/roomManager";
 import { Consciousness } from "./core/consciousness";
+import { ChromaVectorDB } from "./core/vectorDb";
 
 async function main() {
   // Validate environment variables before proceeding
@@ -30,32 +31,24 @@ async function main() {
 
   console.log("LLM client initialized ✓");
 
-  // Mock vector DB for development
-  const mockVectorDb = {
-    async findSimilar(
-      content: string,
-      limit?: number,
-      metadata?: Record<string, any>
-    ) {
-      return [];
-    },
-    async store(content: string, metadata?: Record<string, any>) {
-      // Store implementation
-    },
-    async delete(id: string) {
-      // Delete implementation
-    },
-  };
+  // Initialize vector DB
+  const vectorDb = new ChromaVectorDB("ai_consciousness", {
+    logLevel: LogLevel.DEBUG,
+  });
 
-  // Initialize dependencies with real LLM client
+  // Initialize room manager with vector DB
+  const roomManager = new RoomManager(vectorDb, {
+    logLevel: LogLevel.DEBUG,
+  });
+
+  // Initialize other dependencies
   const intentExtractor = new LLMIntentExtractor(llmClient);
   const processor = new EventProcessor(
-    mockVectorDb,
+    vectorDb,
     intentExtractor,
     llmClient,
     new CoreActionRegistry()
   );
-  const roomManager = new RoomManager(mockVectorDb);
 
   // Initialize core with custom logging config
   const core = new Core(processor, roomManager, {

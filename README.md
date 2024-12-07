@@ -1,4 +1,4 @@
-# Action Potential
+# Daydream
 
 This is a proof of concept for an event-driven agent that can respond to tweets and messages.
 

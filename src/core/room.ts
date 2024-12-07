@@ -1,10 +1,10 @@
-import { v4 as uuidv4 } from "uuid";
+import { createHash } from "crypto";
 
 export interface RoomMetadata {
   name?: string;
   description?: string;
   participants?: string[];
-  platform: string; // e.g., 'twitter', 'telegram', 'discord'
+  platform: string;
   platformSpecific?: Record<string, any>;
   createdAt: Date;
   lastActive: Date;
@@ -16,7 +16,7 @@ export interface Memory {
   content: string;
   timestamp: Date;
   metadata?: Record<string, any>;
-  embedding?: number[]; // Vector embedding for similarity search
+  embedding?: number[];
 }
 
 export class Room {
@@ -29,7 +29,8 @@ export class Room {
     public readonly platform: string,
     metadata?: Partial<RoomMetadata>
   ) {
-    this.id = uuidv4();
+    this.id = Room.createDeterministicId(platform, platformId);
+
     this.metadata = {
       platform,
       createdAt: new Date(),
@@ -38,12 +39,27 @@ export class Room {
     };
   }
 
+  public static createDeterministicId(
+    platform: string,
+    platformId: string
+  ): string {
+    const hash = createHash("sha256")
+      .update(`${platform}:${platformId}`)
+      .digest("hex")
+      .slice(0, 16);
+
+    return `${platform}_${hash}`;
+  }
+
   public async addMemory(
     content: string,
     metadata?: Record<string, any>
   ): Promise<Memory> {
+    // Create deterministic memory ID based on room ID and content
+    const memoryId = Room.createDeterministicMemoryId(this.id, content);
+
     const memory: Memory = {
-      id: uuidv4(),
+      id: memoryId,
       roomId: this.id,
       content,
       timestamp: new Date(),
@@ -54,6 +70,18 @@ export class Room {
     this.metadata.lastActive = new Date();
 
     return memory;
+  }
+
+  public static createDeterministicMemoryId(
+    roomId: string,
+    content: string
+  ): string {
+    const hash = createHash("sha256")
+      .update(`${roomId}:${content}`)
+      .digest("hex")
+      .slice(0, 16);
+
+    return `mem_${hash}`;
   }
 
   public getMemories(limit?: number): Memory[] {

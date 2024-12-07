@@ -132,10 +132,10 @@ export class Core implements EventEmitter<ClientEvent> {
     const platformId = this.getPlatformId(event);
     const platform = this.getPlatform(event);
 
-    let room = this.roomManager.getRoomByPlatformId(platformId, platform);
+    let room = await this.roomManager.getRoomByPlatformId(platformId, platform);
 
     if (!room) {
-      room = this.roomManager.createRoom(platformId, platform, {
+      room = await this.roomManager.createRoom(platformId, platform, {
         name: this.getRoomName(event),
         participants: this.getParticipants(event),
       });
