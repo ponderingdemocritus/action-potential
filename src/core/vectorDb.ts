@@ -29,6 +29,8 @@ export interface VectorDB {
     limit?: number,
     metadata?: Record<string, any>
   ): Promise<SearchResult[]>;
+  storeSystemMetadata(key: string, value: Record<string, any>): Promise<void>;
+  getSystemMetadata(key: string): Promise<Record<string, any> | null>;
 }
 
 interface Cluster {
@@ -67,6 +69,7 @@ export class ChromaVectorDB implements VectorDB {
   private logger: Logger;
   private collectionName: string;
   static readonly CLUSTER_COLLECTION = "clusters";
+  static readonly SYSTEM_COLLECTION = "system_metadata";
 
   constructor(
     collectionName: string = "memories",
@@ -458,5 +461,62 @@ export class ChromaVectorDB implements VectorDB {
       });
       throw error;
     }
+  }
+
+  private async getSystemCollection() {
+    return await this.client.getOrCreateCollection({
+      name: ChromaVectorDB.SYSTEM_COLLECTION,
+      embeddingFunction: this.embedder,
+      metadata: {
+        description: "System-wide metadata storage",
+      },
+    });
+  }
+
+  public async storeSystemMetadata(
+    key: string,
+    value: Record<string, any>
+  ): Promise<void> {
+    const collection = await this.getSystemCollection();
+    const id = `metadata_${key}`;
+
+    await collection.upsert({
+      ids: [id],
+      documents: [JSON.stringify(value)],
+      metadatas: [
+        {
+          ...value,
+          updatedAt: new Date().toISOString(),
+          type: "system_metadata",
+        },
+      ],
+    });
+  }
+
+  public async getSystemMetadata(
+    key: string
+  ): Promise<Record<string, any> | null> {
+    const collection = await this.getSystemCollection();
+
+    try {
+      const result = await collection.get({
+        ids: [`metadata_${key}`],
+      });
+
+      if (result.metadatas?.[0]) {
+        return result.metadatas[0];
+      }
+    } catch (error) {
+      this.logger.error(
+        "ChromaVectorDB.getSystemMetadata",
+        "Failed to get system metadata",
+        {
+          key,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+
+    return null;
   }
 }

@@ -1,13 +1,12 @@
 import { createHash } from "crypto";
 
 export interface RoomMetadata {
-  name?: string;
+  name: string;
   description?: string;
-  participants?: string[];
-  platform: string;
-  platformSpecific?: Record<string, any>;
+  participants: string[];
   createdAt: Date;
   lastActive: Date;
+  metadata?: Record<string, any>;
 }
 
 export interface Memory {
@@ -32,10 +31,12 @@ export class Room {
     this.id = Room.createDeterministicId(platform, platformId);
 
     this.metadata = {
-      platform,
-      createdAt: new Date(),
-      lastActive: new Date(),
-      ...metadata,
+      name: metadata?.name || `Room ${platformId}`,
+      description: metadata?.description,
+      participants: metadata?.participants || [],
+      createdAt: metadata?.createdAt || new Date(),
+      lastActive: metadata?.lastActive || new Date(),
+      metadata: metadata?.metadata,
     };
   }
 

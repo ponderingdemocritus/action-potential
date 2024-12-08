@@ -26,6 +26,7 @@ export interface LLMClientConfig {
 }
 
 interface AnalysisOptions {
+  system?: string;
   role?: string;
   temperature?: number;
   maxTokens?: number;
@@ -186,7 +187,7 @@ export class LLMClient {
     options: AnalysisOptions = {}
   ): Promise<string | StructuredAnalysis> {
     const {
-      role = "financial analyst",
+      system,
       temperature = 0.7,
       maxTokens = 1500,
       formatResponse = false,
@@ -197,7 +198,7 @@ export class LLMClient {
       messages: [
         {
           role: "assistant",
-          content: `You are a ${role} assistant. Analyze information objectively and provide structured responses with clear reasoning. Be specific about confidence levels and uncertainties.`,
+          content: system || "",
         },
         {
           role: "user",

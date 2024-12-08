@@ -5,6 +5,7 @@ import { type IntentExtractor } from "./intent";
 import { Logger, LogLevel } from "./logger";
 import { type Room } from "./room";
 import { type VectorDB, type SearchResult } from "./vectorDb";
+import { type Character, defaultCharacter } from "./character";
 
 export interface ProcessedIntent {
   type: string;
@@ -65,6 +66,7 @@ export class EventProcessor {
     private intentExtractor: IntentExtractor,
     private llmClient: LLMClient,
     private actionRegistry: ActionRegistry,
+    private character: Character = defaultCharacter,
     logLevel: LogLevel = LogLevel.INFO
   ) {
     this.logger = new Logger({
@@ -81,13 +83,33 @@ export class EventProcessor {
       roomId: room.id,
     });
 
+    const availableActions = this.actionRegistry.getAvailableActions();
+
+    const prompt = `Given the following content and available actions, determine appropriate intents that can be acted upon:
+
+Content: "${event.content}"
+
+Available Actions:
+${Array.from(availableActions.entries())
+  .map(
+    ([type, def]) => `
+- ${type}:
+  Description: ${def.description}
+  EventType: ${def.eventType}
+  Platforms: ${def.targetPlatforms.join(", ")}
+`
+  )
+  .join("\n")}
+
+Generate intents that map to these available actions only. You need to use EventType for the type field.`;
+
+    const intents = await this.intentExtractor.extract(event.content, prompt);
+
     const enrichedContent = await this.enrichContent(
       event.content,
       room,
       event.timestamp
     );
-
-    const intents = await this.intentExtractor.extract(event.content);
 
     // Use type guard for room operations
     if (this.vectorDb && hasRoomSupport(this.vectorDb)) {
@@ -100,6 +122,8 @@ export class EventProcessor {
     }
 
     const suggestedActions = await this.generateActions(intents, room);
+
+    console.log("suggestedActions", suggestedActions);
 
     return {
       intents,
@@ -155,6 +179,8 @@ Return only valid JSON, no other text.`;
 
     try {
       const enrichment = await this.llmClient.analyze(prompt, {
+        system:
+          "You are a helpful assistant that generates actions based on intents.",
         temperature: 0.3,
         formatResponse: true,
       });
@@ -189,6 +215,8 @@ Return only valid JSON, no other text.`;
         // Retry with stricter prompt
         const retryPrompt = `${prompt}\n\nIMPORTANT: Respond with ONLY the JSON object, no markdown, no explanations.`;
         const retryResponse = await this.llmClient.analyze(retryPrompt, {
+          system:
+            "You are a helpful assistant that generates actions based on intents.",
           temperature: 0.2, // Lower temperature for more consistent formatting
           formatResponse: true,
         });
@@ -251,13 +279,37 @@ Return only valid JSON, no other text.`;
   ): Promise<CoreEvent[]> {
     const actions: CoreEvent[] = [];
 
+    // Add debug logging to see what intents we're receiving
+    this.logger.debug("EventProcessor.generateActions", "Processing intents", {
+      intents,
+    });
+
     for (const intent of intents) {
       try {
-        // Get all available actions
         const availableActions = this.actionRegistry.getAvailableActions();
 
-        // Create a prompt to determine the best action
-        const prompt = `Given the following intent and available actions, determine the most appropriate action to take.
+        // Add debug logging for available actions
+        this.logger.debug(
+          "EventProcessor.generateActions",
+          "Available actions",
+          {
+            actionCount: availableActions.size,
+            actions: Array.from(availableActions.keys()),
+          }
+        );
+
+        // Modify the prompt to request specific JSON structure
+        let prompt = `Given the following intent and available actions, determine the most appropriate action to take.
+        Return a JSON object with the following structure:
+        {
+            "selectedAction": "action_type_here",
+            "confidence": 0.0-1.0,
+            "parameters": {
+                "content": "action content here",
+                // other parameters as needed
+            },
+            "reasoning": "brief explanation"
+        }
 
 Intent:
 - Type: ${intent.type}
@@ -276,41 +328,64 @@ ${Array.from(availableActions.entries())
   )
   .join("\n")}
 
-Response format:
-\`\`\`json
-{
-  "selectedAction": "action_type",
-  "confidence": 0.0-1.0,
-  "parameters": {
-    // Action-specific parameters
-  },
-  "reasoning": "Explanation of why this action was chosen"
-}
-\`\`\`
+Select the most appropriate action and provide parameters. Respond with ONLY the JSON object.`;
 
-Return only valid JSON.`;
+        // If this is a tweet-related action, enrich the prompt
+        if (intent.type.includes("tweet")) {
+          prompt = await this.enrichPrompt(
+            this.character.templates?.tweetTemplate || "",
+            {
+              context: intent.parameters?.context || "",
+            }
+          );
+        }
 
         const response = await this.llmClient.analyze(prompt, {
+          system:
+            "You are Ser blob, a crypto, market, geopolitical, and economic expert. You speak like an analyst from old times.",
           temperature: 0.3,
           formatResponse: true,
         });
 
-        const result =
-          typeof response === "string"
-            ? JSON.parse(this.stripCodeBlock(response))
-            : response;
+        // Add debug logging for LLM response
+        this.logger.debug("EventProcessor.generateActions", "LLM response", {
+          response,
+        });
 
-        if (result.confidence >= 0.7) {
+        let result;
+        try {
+          result =
+            typeof response === "string"
+              ? JSON.parse(this.stripCodeBlock(response))
+              : response;
+        } catch (parseError) {
+          this.logger.error(
+            "EventProcessor.generateActions",
+            "Failed to parse LLM response",
+            {
+              error:
+                parseError instanceof Error
+                  ? parseError.message
+                  : String(parseError),
+              response,
+            }
+          );
+          continue;
+        }
+
+        // Remove the strict confidence threshold to help with debugging
+        // if (result.confidence >= 0.7) {  // Comment out or lower this threshold temporarily
+        if (result.selectedAction) {
+          // Just check if an action was selected
           const actionDef = this.actionRegistry.getActionDefinition(
             result.selectedAction
           );
 
           if (actionDef) {
-            // Create the action event based on the definition
             const event: CoreEvent = {
               type: actionDef.eventType,
               target: actionDef.clientType,
-              content: result.parameters.content || "",
+              content: result.parameters?.content || "",
               timestamp: new Date(),
               metadata: {
                 ...result.parameters,
@@ -326,24 +401,9 @@ Return only valid JSON.`;
             this.logger.debug(
               "EventProcessor.generateActions",
               "Generated action event",
-              {
-                intentType: intent.type,
-                actionType: actionDef.type,
-                confidence: result.confidence,
-                reasoning: result.reasoning,
-              }
+              { event }
             );
           }
-        } else {
-          this.logger.debug(
-            "EventProcessor.generateActions",
-            "Action confidence too low",
-            {
-              intentType: intent.type,
-              selectedAction: result.selectedAction,
-              confidence: result.confidence,
-            }
-          );
         }
       } catch (error) {
         this.logger.error(
@@ -357,6 +417,23 @@ Return only valid JSON.`;
       }
     }
 
+    // Add final debug logging
+    this.logger.debug("EventProcessor.generateActions", "Generated actions", {
+      actionCount: actions.length,
+      actions,
+    });
+
     return actions;
+  }
+
+  private async enrichPrompt(prompt: string, context: any): Promise<string> {
+    return prompt.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+      if (key === "name") return this.character.name;
+      if (key === "voice") return this.character.voice.tone;
+      if (key === "emojis") return this.character.voice.emojis.join(" ");
+      if (key === "topics")
+        return this.character.instructions.topics.join(", ");
+      return context[key] || match;
+    });
   }
 }

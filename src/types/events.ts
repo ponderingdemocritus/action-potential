@@ -20,7 +20,15 @@ export interface ClientEvent extends BaseEvent {
 export interface TweetRequest extends CoreEvent {
   type: "tweet_request";
   content: string;
-  replyTo?: string;
+  metadata?: {
+    inReplyTo?: string;
+    conversationId?: string;
+    context?: {
+      sentiment?: string;
+      topics?: string[];
+      threadContext?: string[];
+    };
+  };
 }
 
 export interface DMRequest extends CoreEvent {
@@ -35,6 +43,21 @@ export interface TweetReceived extends ClientEvent {
   tweetId: string;
   userId: string;
   username: string;
+  timestamp: Date;
+  metadata?: {
+    isReply?: boolean;
+    isRetweet?: boolean;
+    hasMedia?: boolean;
+    url?: string;
+    threadContext?: string[];
+    conversationId?: string;
+    inReplyToId?: string;
+    metrics?: {
+      likes?: number;
+      retweets?: number;
+      replies?: number;
+    };
+  };
 }
 
 export interface DMReceived extends ClientEvent {

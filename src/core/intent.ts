@@ -9,8 +9,7 @@ export interface Intent {
 }
 
 export interface IntentExtractor {
-  extract(content: string): Promise<Intent[]>;
-  train(examples: Array<{ content: string; intents: Intent[] }>): Promise<void>;
+  extract(content: string, prompt?: string): Promise<ProcessedIntent[]>;
 }
 
 export class LLMIntentExtractor implements IntentExtractor {
@@ -31,12 +30,10 @@ export class LLMIntentExtractor implements IntentExtractor {
     this.logger.debug("LLMIntentExtractor.extract", "Extracting intents", {
       contentLength: content.length,
     });
-
     try {
       const prompt = `
         Analyze the following content and extract user intents. 
         Respond with a JSON array of intents, where each intent has:
-        - type: string describing the intent
         - confidence: number between 0-1
         - parameters: optional object with relevant parameters
 
@@ -123,6 +120,8 @@ Analyze the patterns and update your understanding accordingly.
     try {
       this.logger.debug("LLMIntentExtractor.train", "Sending training prompt");
       await this.llmClient.analyze(prompt, {
+        system:
+          "You are a analysis expert that extracts intents from messages.",
         role: "intent analysis trainer",
         temperature: 0.2,
         formatResponse: true,

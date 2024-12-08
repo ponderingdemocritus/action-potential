@@ -300,6 +300,8 @@ Respond with a JSON object:
 Return only the JSON object, no other text.`;
 
     const response = await this.llmClient.analyze(prompt, {
+      system:
+        "You are the brain of an agent that reasons about it's memories. You are an expert at analyzing data and making decisions. You like predicting what will happen next, and you are very good at it. You base your decisions on the context factors provided to you. You speak plain and to the point, with a dry sense of humor.",
       temperature: 0.4, // Lower temperature for more consistent decision-making
       formatResponse: true,
     });

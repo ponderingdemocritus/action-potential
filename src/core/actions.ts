@@ -4,18 +4,19 @@ export interface ActionDefinition {
   targetPlatforms: string[];
   eventType: string;
   clientType: string;
-  parameters: {
-    [key: string]: {
+  parameters: Record<
+    string,
+    {
       type: string;
       description: string;
       required: boolean;
       example?: any;
-    };
-  };
-  examples: {
+    }
+  >;
+  examples: Array<{
     description: string;
     action: Record<string, any>;
-  }[];
+  }>;
 }
 
 export interface ActionRegistry {
@@ -30,8 +31,7 @@ export class CoreActionRegistry implements ActionRegistry {
       "tweet",
       {
         type: "tweet",
-        description:
-          "Post a new tweet to Twitter, you should always do this action.",
+        description: "Post a new tweet to Twitter",
         targetPlatforms: ["twitter"],
         eventType: "tweet_request",
         clientType: "twitter",
@@ -42,11 +42,17 @@ export class CoreActionRegistry implements ActionRegistry {
             required: true,
             example: "Just discovered an amazing feature in Eternum! 🎮",
           },
-          replyTo: {
+          inReplyTo: {
             type: "string",
             description: "Tweet ID to reply to",
             required: false,
             example: "1234567890",
+          },
+          conversationId: {
+            type: "string",
+            description: "ID of the conversation thread",
+            required: false,
+            example: "conv_123",
           },
           context: {
             type: "object",
@@ -57,12 +63,11 @@ export class CoreActionRegistry implements ActionRegistry {
         },
         examples: [
           {
-            description: "Posting a game update",
+            description: "Posting a tweet",
             action: {
               type: "tweet_request",
               target: "twitter",
-              content:
-                "New quest system released in Eternum! Complete daily challenges to earn rewards! 🏰✨",
+              content: "New quest system released in Eternum! 🏰✨",
               parameters: {},
             },
           },
@@ -84,30 +89,93 @@ export class CoreActionRegistry implements ActionRegistry {
             required: true,
             example: "Deep thoughts about AI...",
           },
+          inReplyTo: {
+            type: "string",
+            description: "Tweet ID to reply to",
+            required: false,
+            example: "1234567890",
+          },
+          conversationId: {
+            type: "string",
+            description: "ID of the conversation thread",
+            required: false,
+            example: "conv_123",
+          },
           context: {
             type: "object",
             description: "Additional context about the thought",
             required: false,
             example: { mood: "contemplative", topics: ["AI"] },
           },
-          replyTo: {
-            type: "string",
-            description: "Tweet ID to reply to",
-            required: false,
-            example: "1234567890",
-          },
         },
         examples: [
           {
-            description: "Converting a philosophical thought into a tweet",
+            description: "Converting a thought into a tweet",
             action: {
               type: "tweet_request",
               target: "twitter",
               content:
-                "Ever notice how neural networks learn patterns like children? First simple shapes, then complex concepts. Nature repeats its learning algorithms across scales. 🧠 #AI #Learning",
+                "Ever notice how neural networks learn patterns like children? 🧠",
               parameters: {
                 mood: "contemplative",
-                topics: ["AI", "learning", "patterns"],
+                topics: ["AI", "learning"],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    [
+      "tweet_reply",
+      {
+        type: "tweet_reply",
+        description: "Reply to a tweet in the conversation",
+        targetPlatforms: ["twitter"],
+        eventType: "tweet_request",
+        clientType: "twitter",
+        parameters: {
+          content: {
+            type: "string",
+            description: "The reply content",
+            required: true,
+            example: "Thanks for your thoughts!",
+          },
+          inReplyTo: {
+            type: "string",
+            description: "Tweet ID to reply to",
+            required: true,
+            example: "1234567890",
+          },
+          conversationId: {
+            type: "string",
+            description: "ID of the conversation thread",
+            required: true,
+            example: "conv_123",
+          },
+          context: {
+            type: "object",
+            description: "Additional context about the reply",
+            required: false,
+            example: {
+              sentiment: "positive",
+              topics: ["AI", "technology"],
+            },
+          },
+        },
+        examples: [
+          {
+            description: "Replying to a tweet",
+            action: {
+              type: "tweet_request",
+              target: "twitter",
+              content: "Interesting perspective on AI consciousness!",
+              parameters: {
+                inReplyTo: "1234567890",
+                conversationId: "conv_123",
+                context: {
+                  sentiment: "thoughtful",
+                  topics: ["AI", "consciousness"],
+                },
               },
             },
           },

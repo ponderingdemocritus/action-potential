@@ -4,10 +4,13 @@ import {
   type DiscordMessageReceived,
   type TweetReceived,
 } from "../types/events";
+import type { ActionRegistry } from "./actions";
+import type { IntentExtractor } from "./intent";
 import { Logger, type LoggerConfig, LogLevel } from "./logger";
 import { EventProcessor, type ProcessedIntent } from "./processor";
 import { Room } from "./room";
 import { RoomManager } from "./roomManager";
+import { type VectorDB } from "./vectorDb";
 
 export interface EventEmitter<T extends { type: string }> {
   emit(event: T): Promise<void>;
@@ -39,14 +42,19 @@ export class Core implements EventEmitter<ClientEvent> {
   private processor: EventProcessor;
   private roomManager: RoomManager;
   private logger: Logger;
+  public readonly vectorDb: VectorDB;
 
   constructor(
     processor: EventProcessor,
     roomManager: RoomManager,
+    actionRegistry: ActionRegistry,
+    intentExtractor: IntentExtractor,
+    vectorDb: VectorDB,
     config?: CoreConfig
   ) {
     this.processor = processor;
     this.roomManager = roomManager;
+    this.vectorDb = vectorDb;
     this.logger = new Logger(
       config?.logging ?? {
         level: LogLevel.INFO,
@@ -109,26 +117,37 @@ export class Core implements EventEmitter<ClientEvent> {
     await this.executeIntentActions(result.intents);
     await this.routeSuggestedActions(result.suggestedActions);
 
+    console.log("event.type", event.type);
     // Notify handlers
     const handlers = this.handlers.get(event.type);
     if (handlers) {
-      this.logger.trace("Core.emit", "Notifying handlers", {
+      this.logger.debug("Core.emit", "Notifying event handlers", {
         type: event.type,
         handlerCount: handlers.size,
       });
       await Promise.all(
-        [...handlers].map((handler) =>
-          handler({
+        [...handlers].map((handler) => {
+          this.logger.trace("Core.emit", "Calling handler", {
+            type: event.type,
+            metadata: { ...event.metadata, ...result.enrichedContext },
+          });
+          return handler({
             ...event,
             metadata: { ...event.metadata, ...result.enrichedContext },
-          })
-        )
+          });
+        })
       );
+      this.logger.debug("Core.emit", "Finished notifying handlers", {
+        type: event.type,
+      });
+    } else {
+      this.logger.trace("Core.emit", "No handlers registered for event type", {
+        type: event.type,
+      });
     }
   }
 
   private async ensureRoom(event: ClientEvent): Promise<Room> {
-    // Logic to determine room ID from event
     const platformId = this.getPlatformId(event);
     const platform = this.getPlatform(event);
 
@@ -137,73 +156,50 @@ export class Core implements EventEmitter<ClientEvent> {
     if (!room) {
       room = await this.roomManager.createRoom(platformId, platform, {
         name: this.getRoomName(event),
+        description: this.getRoomDescription(event),
         participants: this.getParticipants(event),
+        metadata: event.metadata,
       });
     }
 
     return room;
   }
 
-  // Helper methods to extract room context from different event types
-  private getPlatform(event: ClientEvent): string {
-    // Determine platform from event type
-    if (event.type.startsWith("tweet_") || event.type.startsWith("dm_")) {
-      return "twitter";
-    }
-    if (event.type.startsWith("discord_")) {
-      return "discord";
-    }
-    // Default to source type if no specific platform can be determined
-    return event.source.split("-")[0];
-  }
-
   private getPlatformId(event: ClientEvent): string {
-    // Example implementation
-    if (this.isTweetEvent(event)) {
-      return (event as TweetReceived).tweetId;
-    }
-    if (this.isDiscordEvent(event)) {
-      return (event as DiscordMessageReceived).channelId;
+    if (event.type === "tweet_received") {
+      return (
+        (event as TweetReceived).metadata?.conversationId ??
+        (event as TweetReceived).tweetId
+      );
     }
     return event.source;
   }
 
+  private getPlatform(event: ClientEvent): string {
+    return event.source;
+  }
+
   private getRoomName(event: ClientEvent): string {
-    if (this.isTweetEvent(event)) {
-      const tweetEvent = event as TweetReceived;
-      return `Twitter Thread by ${tweetEvent.username}`;
+    if (event.type === "tweet_received") {
+      return `Twitter Thread ${(event as TweetReceived).tweetId}`;
     }
-    if (this.isDiscordEvent(event)) {
-      const discordEvent = event as DiscordMessageReceived;
-      return `Discord Channel ${discordEvent.channelId}`;
+    return `${event.source} Room`;
+  }
+
+  private getRoomDescription(event: ClientEvent): string {
+    if (event.type === "tweet_received") {
+      return `Twitter conversation thread starting with tweet ${
+        (event as TweetReceived).tweetId
+      }`;
     }
-    return `Room for ${event.source}`;
+    return `Conversation room for ${event.source}`;
   }
 
   private getParticipants(event: ClientEvent): string[] {
-    const participants = new Set<string>();
-
-    if (this.isTweetEvent(event)) {
-      const tweetEvent = event as TweetReceived;
-      participants.add(tweetEvent.username);
+    if (event.type === "tweet_received") {
+      return [(event as TweetReceived).username];
     }
-    if (this.isDiscordEvent(event)) {
-      const discordEvent = event as DiscordMessageReceived;
-      participants.add(discordEvent.username);
-    }
-
-    // Always add the source as a participant
-    participants.add(event.source);
-
-    return Array.from(participants);
-  }
-
-  private isTweetEvent(event: ClientEvent): boolean {
-    return event.type.startsWith("tweet_");
-  }
-
-  private isDiscordEvent(event: ClientEvent): boolean {
-    return event.type.startsWith("discord_");
+    return [];
   }
 
   private async executeIntentActions(
@@ -245,6 +241,9 @@ export class Core implements EventEmitter<ClientEvent> {
       id: client.id,
       type: client.type,
     });
+
+    this.handlers.set(client.type, new Set());
+
     this.clients.set(client.id, client);
     client.listen().catch((err) => {
       this.logger.error("Core.registerClient", "Failed to start client", {
