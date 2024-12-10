@@ -233,6 +233,8 @@ ${JSON.stringify(template.responseFormat, null, 2)}
 Return only the JSON object, no other text or formatting.`;
 
     const response = await this.llmClient.analyze(prompt, {
+      system:
+        "You are a thoughtful AI that generates internal thoughts based on recent memories.",
       temperature: template.temperature,
       formatResponse: true,
     });

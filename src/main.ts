@@ -15,12 +15,12 @@ async function main() {
   // Initialize VectorDB first
   const vectorDb = new ChromaVectorDB("memories", {
     chromaUrl: "http://localhost:8000",
-    logLevel: LogLevel.DEBUG,
+    logLevel: LogLevel.INFO,
   });
 
   // Initialize RoomManager with VectorDB
   const roomManager = new RoomManager(vectorDb, {
-    logLevel: LogLevel.DEBUG,
+    logLevel: LogLevel.INFO,
   });
 
   const actionRegistry = new CoreActionRegistry();
@@ -40,7 +40,7 @@ async function main() {
     llmClient,
     actionRegistry,
     defaultCharacter,
-    LogLevel.DEBUG
+    LogLevel.INFO
   );
 
   // Initialize Core with all dependencies including VectorDB

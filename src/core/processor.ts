@@ -123,8 +123,6 @@ Generate intents that map to these available actions only. You need to use Event
 
     const suggestedActions = await this.generateActions(intents, room);
 
-    console.log("suggestedActions", suggestedActions);
-
     return {
       intents,
       suggestedActions,
@@ -133,11 +131,15 @@ Generate intents that map to these available actions only. You need to use Event
   }
 
   private stripCodeBlock(text: string): string {
-    // Remove markdown code block markers and any language identifier
-    return text
-      .replace(/^```[\w]*\n/, "") // Remove opening ```json or similar
-      .replace(/\n```$/, "") // Remove closing ```
+    // First remove markdown code block markers if present
+    text = text
+      .replace(/^```[\w]*\n/, "")
+      .replace(/\n```$/, "")
       .trim();
+
+    // Find the first occurrence of a valid JSON object
+    const jsonMatch = text.match(/\{[\s\S]*?\}/);
+    return jsonMatch ? jsonMatch[0] : text;
   }
 
   private async enrichContent(
@@ -298,9 +300,11 @@ Return only valid JSON, no other text.`;
           }
         );
 
-        // Modify the prompt to request specific JSON structure
         let prompt = `Given the following intent and available actions, determine the most appropriate action to take.
-        Return a JSON object with the following structure:
+        YOU MUST RESPOND WITH A SINGLE VALID JSON OBJECT AND NOTHING ELSE.
+        Required JSON structure:
+
+        \`\`\`json
         {
             "selectedAction": "action_type_here",
             "confidence": 0.0-1.0,
@@ -310,6 +314,7 @@ Return only valid JSON, no other text.`;
             },
             "reasoning": "brief explanation"
         }
+        \`\`\`
 
 Intent:
 - Type: ${intent.type}
@@ -328,22 +333,23 @@ ${Array.from(availableActions.entries())
   )
   .join("\n")}
 
-Select the most appropriate action and provide parameters. Respond with ONLY the JSON object.`;
+IMPORTANT: Return ONLY the JSON object with no additional text or explanations.`;
 
-        // If this is a tweet-related action, enrich the prompt
+        // If this is a tweet-related action, append the tweet template
         if (intent.type.includes("tweet")) {
-          prompt = await this.enrichPrompt(
+          const tweetTemplate = await this.enrichPrompt(
             this.character.templates?.tweetTemplate || "",
             {
               context: intent.parameters?.context || "",
             }
           );
+          prompt += `\n\nWhen generating tweet content, use this template for tone of voice:\n${tweetTemplate}`;
         }
 
         const response = await this.llmClient.analyze(prompt, {
           system:
             "You are Ser blob, a crypto, market, geopolitical, and economic expert. You speak like an analyst from old times.",
-          temperature: 0.3,
+          temperature: 0.8,
           formatResponse: true,
         });
 
